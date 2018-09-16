@@ -1,0 +1,9 @@
+.tox
+*.egg-info
+examples
+CODE_OF_CONDUCT.rst
+ChangeLog
+LICENSE
+etc/armada/armada.conf
+etc/armada/policy.yaml
+charts/*

@@ -1,0 +1,304 @@
+# Copyright 2017 The Openstack-Helm Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# This file provides defaults for armada
+
+release_group: null
+
+labels:
+  job:
+    node_selector_key: ucp-control-plane
+    node_selector_value: enabled
+  node_selector_key: ucp-control-plane
+  node_selector_value: enabled
+
+images:
+  tags:
+    api: 'quay.io/airshipit/armada:latest'
+    dep_check: 'quay.io/stackanetes/kubernetes-entrypoint:v0.3.1'
+    ks_endpoints: 'docker.io/openstackhelm/heat:newton'
+    ks_service: 'docker.io/openstackhelm/heat:newton'
+    ks_user: 'docker.io/openstackhelm/heat:newton'
+    image_repo_sync: docker.io/docker:17.07.0
+  pull_policy: "IfNotPresent"
+  local_registry:
+    active: false
+    exclude:
+      - dep_check
+      - image_repo_sync
+
+network:
+  api:
+    ingress:
+      annotations:
+        nginx.ingress.kubernetes.io/rewrite-target: /
+      classes:
+        cluster: nginx-cluster
+        namespace: nginx
+      public: true
+    node_port:
+      enabled: false
+      port: 31903
+
+dependencies:
+  dynamic:
+    common:
+      local_image_registry:
+        jobs:
+          - armada-image-repo-sync
+        services:
+          - endpoint: node
+            service: local_image_registry
+  static:
+    api:
+      jobs:
+        - armada-ks-service
+        - armada-ks-user
+      services:
+        - endpoint: internal
+          service: identity
+    ks_endpoints:
+      jobs:
+        - armada-ks-service
+      services:
+        - endpoint: internal
+          service: identity
+    ks_service:
+      services:
+        - endpoint: internal
+          service: identity
+    ks_user:
+      services:
+        - endpoint: internal
+          service: identity
+    image_repo_sync:
+      services:
+        - endpoint: internal
+          service: local_image_registry
+
+# typically overridden by environmental
+# values, but should include all endpoints
+# required by this chart
+endpoints:
+  cluster_domain_suffix: cluster.local
+  identity:
+    name: keystone
+    auth:
+      admin:
+        password: password
+        project_domain_name: default
+        project_name: admin
+        region_name: RegionOne
+        user_domain_name: default
+        username: admin
+      armada:
+        password: password
+        project_domain_name: default
+        project_name: service
+        region_name: RegionOne
+        role: admin
+        user_domain_name: default
+        username: armada
+    hosts:
+      default: keystone
+      internal: keystone-api
+    path:
+      default: /v3
+    scheme:
+      default: http
+    port:
+      api:
+        default: 80
+        internal: 5000
+    host_fqdn_override:
+      default: null
+  armada:
+    name: armada
+    hosts:
+      default: armada-api
+      public: armada
+    port:
+      api:
+        default: 8000
+    path:
+      default: /api/v1.0
+    scheme:
+      default: http
+    host_fqdn_override:
+      default: null
+      # NOTE(lamt): This chart supports TLS for fqdn overriden public
+      # endpoints using the following format:
+      # public:
+      #   host: null
+      #   tls:
+      #     crt: null
+      #     key: null
+  local_image_registry:
+    name: docker-registry
+    namespace: docker-registry
+    hosts:
+      default: localhost
+      internal: docker-registry
+      node: localhost
+    host_fqdn_override:
+      default: null
+    port:
+      registry:
+        node: 5000
+
+secrets:
+  identity:
+    admin: armada-keystone-admin
+    armada: armada-keystone-user
+  tls:
+    armada:
+      api:
+        public: armada-tls-public
+
+conf:
+  armada:
+    armada_api:
+      bind_port: 8000
+    keystone_authtoken:
+      auth_type: password
+      auth_version: 3
+      delay_auth_decision: true
+    oslo_policy:
+      policy_file: policy.yaml
+  paste:
+    'app:armada-api':
+      paste.app_factory: 'armada.api.server:paste_start_armada'
+    'filter:authtoken':
+      paste.filter_factory: 'keystonemiddleware.auth_token:filter_factory'
+    'pipeline:main':
+      pipeline: authtoken armada-api
+  policy:
+    admin_required: 'role:admin'
+    'armada:create_endpoints': 'rule:admin_required'
+    'armada:rollback_release': 'rule:admin_required'
+    'armada:test_manifest': 'rule:admin_required'
+    'armada:test_release': 'rule:admin_required'
+    'armada:validate_manifest': 'rule:admin_required'
+    service_or_admin: 'rule:admin_required or rule:service_role'
+    service_role: 'role:service'
+    'tiller:get_released': 'rule:admin_required'
+    'tiller:get_status': 'rule:admin_required'
+
+pod:
+  env:
+    armada_api:
+# ARMADA_API_PORT should = conf.armada.armada_api.bind_port in standard cases
+      - name: ARMADA_API_PORT
+        value: 8000
+#      - name: http_proxy
+#        value: http://proxy.example.com:8080
+#      - name: https_proxy
+#        value: http://proxy.example.com:8080
+#      - name: no_proxy
+#        value: 10.96.0.1
+#      - name: HTTP_PROXY
+#        value: http://proxy.example.com:8080
+#      - name: HTTPS_PROXY
+#        value: http://proxy.example.com:8080
+#      - name: NO_PROXY
+#        value: 10.96.0.1
+  mounts:
+    armada_api:
+      init_container: null
+  user:
+    armada:
+      uid: 1000
+  affinity:
+    anti:
+      type:
+        default: preferredDuringSchedulingIgnoredDuringExecution
+      topologyKey:
+        default: kubernetes.io/hostname
+  replicas:
+    api: 1
+  lifecycle:
+    upgrades:
+      deployments:
+        revision_history: 3
+        pod_replacement_strategy: RollingUpdate
+        rolling_update:
+          max_unavailable: 1
+          max_surge: 3
+    disruption_budget:
+      api:
+        min_available: 0
+    termination_grace_period:
+      api:
+        timeout: 30
+  resources:
+    enabled: false
+    api:
+      limits:
+        memory: "128Mi"
+        cpu: "100m"
+      requests:
+        memory: "128Mi"
+        cpu: "100m"
+    jobs:
+      ks_user:
+        limits:
+          memory: "128Mi"
+          cpu: "100m"
+        requests:
+          memory: "128Mi"
+          cpu: "100m"
+      ks_service:
+        limits:
+          memory: "128Mi"
+          cpu: "100m"
+        requests:
+          memory: "128Mi"
+          cpu: "100m"
+      ks_endpoints:
+        limits:
+          memory: "128Mi"
+          cpu: "100m"
+        requests:
+          memory: "128Mi"
+          cpu: "100m"
+      image_repo_sync:
+        requests:
+          memory: "128Mi"
+          cpu: "100m"
+        limits:
+          memory: "1024Mi"
+          cpu: "2000m"
+    test:
+      api:
+        limits:
+          memory: "128Mi"
+          cpu: "100m"
+        requests:
+          memory: "128Mi"
+          cpu: "100m"
+
+manifests:
+  configmap_bin: true
+  configmap_etc: true
+  deployment_api: true
+  ingress_api: true
+  job_image_repo_sync: true
+  job_ks_endpoints: true
+  job_ks_service: true
+  job_ks_user: true
+  secret_ingress_tls: true
+  secret_keystone: true
+  service: true
+  service_ingress: true
+  test_armada_api: true
